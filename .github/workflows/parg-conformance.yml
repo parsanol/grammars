@@ -47,13 +47,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Rust VM gate (the artifacts replay through the engine)
+      - name: Rust replay gate (the embedded suites + the corpora through the native engine)
         run: |
-          git clone --depth 1 --branch "$RS_REF" \
-            https://github.com/parsanol/parsanol-rs ../parsanol-rs
-          cd ../parsanol-rs
-          PARG_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts" \
-            cargo test -p parsanol --release --test parg_bindings
+          cd tools/rust-replay
+          cargo run --release
   typescript:
     runs-on: ubuntu-24.04
     steps:
@@ -61,14 +58,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: TS/wasm gate (the artifacts replay through wasm)
+      - name: TS/wasm replay gate (the corpora through the wasm engine)
         run: |
-          git clone --depth 1 --branch "$TS_REF" \
-            https://github.com/parsanol/parsanol-ts ../parsanol-ts
-          cd ../parsanol-ts
-          npm install
           npm install --no-save parsanol@"^1.5.28"
-          npm run build
-          npx tsc -p tsconfig.test.json
-          PARG_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts" \
-            node --test dist-test/test/parg-runtime.test.js
+          node tools/ts-replay.mjs
