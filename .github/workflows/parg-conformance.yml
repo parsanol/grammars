@@ -1,0 +1,74 @@
+name: parg-conformance
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+env:
+  # The released compiler the artifacts are baked with — the current
+  # train (the re-homing sealed the five data-format flavors at the
+  # 1.5.26 engine). A grammar change must carry its re-baked corpora
+  # and re-sealed artifacts; CI's freeze check proves it.
+  PARSANOL_VERSION: 1.5.26
+  RS_REF: main
+  TS_REF: main
+
+jobs:
+  grammar:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.8'
+      - name: Compile every grammar (lint + validity + tests)
+        run: |
+          gem install parsanol -v "$PARSANOL_VERSION"
+          for f in "$GITHUB_WORKSPACE"/grammars/*.parg; do
+            parsanol parg test "$f" || exit 1
+          done
+      - name: The frozen corpora match the sealed artifacts
+        run: |
+          # Every corpus file records the artifact checksum it was baked
+          # against; the committed artifact pair must agree.
+          ruby -rrubygems -e '
+            require "json"
+            Dir.glob("corpora/*/corpus.json").each do |corpus|
+              c = JSON.parse(File.read(corpus))
+              flavor = c["grammar"]
+              artifact = JSON.parse(File.read("artifacts/#{flavor}.json"))
+              sealed = artifact["checksum"]
+              raise "#{corpus}: corpus checksum #{c["artifact_checksum"]} != artifact #{sealed}" unless c["artifact_checksum"] == sealed
+              puts "#{flavor}: corpus/artifact checksums agree (#{sealed[0, 16]}...)"
+            end
+          '
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust VM gate (the artifacts replay through the engine)
+        run: |
+          git clone --depth 1 --branch "$RS_REF" \
+            https://github.com/parsanol/parsanol-rs ../parsanol-rs
+          cd ../parsanol-rs
+          PARG_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts" \
+            cargo test -p parsanol --release --test parg_bindings
+  typescript:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: TS/wasm gate (the artifacts replay through wasm)
+        run: |
+          git clone --depth 1 --branch "$TS_REF" \
+            https://github.com/parsanol/parsanol-ts ../parsanol-ts
+          cd ../parsanol-ts
+          npm install
+          npm install --no-save parsanol@"^1.5.28"
+          npm run build
+          npx tsc -p tsconfig.test.json
+          PARG_ARTIFACT_DIR="$GITHUB_WORKSPACE/artifacts" \
+            node --test dist-test/test/parg-runtime.test.js
